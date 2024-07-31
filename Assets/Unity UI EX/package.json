@@ -1,0 +1,11 @@
+{
+  "name": "com.unity.ugui.ex",
+  "displayName": "Unity UI EX",
+  "version": "1.0.0",
+  "unity": "2019.2",
+  "keywords": ["UI", "ugui", "Unity UI", "Canvas", "EX", "Unity UI EX"],
+  "description": "Extend Unity UI",
+  "dependencies": {
+    "com.unity.ugui": "1.0.0"
+  }
+}
