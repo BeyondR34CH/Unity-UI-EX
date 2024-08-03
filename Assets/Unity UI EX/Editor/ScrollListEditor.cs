@@ -7,6 +7,7 @@ namespace UnityEditor.UI.EX
     [CanEditMultipleObjects]
     public class ScrollListEditor : Editor
     {
+        SerializedProperty m_Viewport;
         SerializedProperty m_LayoutAxis;
         SerializedProperty m_Alignment;
         SerializedProperty m_Padding;
@@ -20,6 +21,7 @@ namespace UnityEditor.UI.EX
 
         protected virtual void OnEnable()
         {
+            m_Viewport = serializedObject.FindProperty("m_Viewport");
             m_LayoutAxis = serializedObject.FindProperty("m_LayoutAxis");
             m_Alignment = serializedObject.FindProperty("m_Alignment");
             m_Padding = serializedObject.FindProperty("m_Padding");
@@ -36,6 +38,7 @@ namespace UnityEditor.UI.EX
         {
             serializedObject.Update();
 
+            EditorGUILayout.PropertyField(m_Viewport, new GUIContent(m_Viewport.objectReferenceValue ? "Viewport" : "Viewport (Def-Parent)"), true);
             EditorGUILayout.PropertyField(m_LayoutAxis, true);
             EditorGUILayout.PropertyField(m_Alignment, true);
             EditorGUILayout.PropertyField(m_Padding, true);

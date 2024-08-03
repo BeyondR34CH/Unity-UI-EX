@@ -16,26 +16,53 @@ namespace UnityEngine.UI.EX
     {
         public enum ListAnchor { UpperLeft, MiddleCenter, LowerRight }
 
-        private class ScrollItem
+        private struct ScrollItem
         {
             private int m_PrefabID;
             private GameObject m_Prefab;
 
             public float position { get; set; }
             public float size { get; set; }
-            public int prefabID => m_PrefabID;
-            public GameObject prefab { get { return m_Prefab; } set { m_Prefab = value; m_PrefabID = m_Prefab ? m_Prefab.GetInstanceID() : 0; } }
-            public GameObject gameObject { get; set; }
+            public readonly int prefabID => m_PrefabID;
+            public GameObject prefab { readonly get { return m_Prefab; } set { m_Prefab = value; m_PrefabID = m_Prefab ? m_Prefab.GetInstanceID() : 0; } }
+            public GameObject gameObject { get; private set; }
 
-            public bool IsVisible(float viewHead, float viewTail)
+            public readonly bool IsVisible(float viewHead, float viewTail)
             {
                 var posTail = position + size;
                 return position >= viewHead && position < viewTail || posTail > viewHead && posTail <= viewTail;
             }
+
+            public bool ShowItem(Dictionary<int, Queue<GameObject>> pools, Transform parent, Action<int, GameObject> onUpdateItem, int updateIndex)
+            {
+                if (gameObject) return false;
+
+                if (!pools.TryGetValue(prefabID, out var itemPool)) pools[prefabID] = itemPool = new();
+                gameObject = itemPool.Count > 0 ? itemPool.Dequeue() : Instantiate(prefab, parent);
+                onUpdateItem?.Invoke(updateIndex, gameObject);
+                gameObject.SetActive(true);
+
+                return true;
+            }
+
+            public bool HideItem(Dictionary<int, Queue<GameObject>> pools)
+            {
+                if (!gameObject) return false;
+
+                gameObject.SetActive(false);
+                if (pools.TryGetValue(prefabID, out var itemPool)) itemPool.Enqueue(gameObject);
+                else Destroy(gameObject);
+                gameObject = null;
+
+                return true;
+            }
         }
 
+        [SerializeField] private RectTransform m_Viewport;
+        public RectTransform viewport { get { return m_Viewport ? m_Viewport : transform.parent is RectTransform parentRect ? parentRect : null; } set { m_Viewport = value; SetDirty(); } }
+
         [SerializeField] private RectTransform.Axis m_LayoutAxis = RectTransform.Axis.Vertical;
-        public RectTransform.Axis layoutAxis { get { return m_LayoutAxis; } set { m_LayoutAxis = value; } }
+        public RectTransform.Axis layoutAxis { get { return m_LayoutAxis; } set { m_LayoutAxis = value; UpdateItemData(true); SetDirty(); } }
 
         private bool isVertical => layoutAxis == RectTransform.Axis.Vertical;
 
@@ -70,8 +97,8 @@ namespace UnityEngine.UI.EX
         {
             m_IsDirty = false;
             m_Position = rectTransform.anchoredPosition;
-            m_ParentSize = transform.parent is RectTransform parentRT ? parentRT.rect.size : Vector2.zero;
-            UpdateItem(true);
+            m_ViewSize = viewport ? viewport.rect.size : Vector2.zero;
+            UpdateItem(true, true);
         }
 
         protected override void OnDisable()
@@ -82,12 +109,12 @@ namespace UnityEngine.UI.EX
 
         protected virtual void LateUpdate()
         {
-            var parentRectSizeChange = CheckParentRectSize();
-            var anchoredPosChange = CheckAnchoredPos();
+            var viewSizeChange = CheckViewport();
+            var ancPosChange = CheckAnchoredPos();
 
-            if (parentRectSizeChange || anchoredPosChange)
+            if (viewSizeChange || ancPosChange)
             {
-                UpdateItem(parentRectSizeChange);
+                UpdateItem(viewSizeChange);
             }
         }
 
@@ -111,16 +138,38 @@ namespace UnityEngine.UI.EX
         //     SetDirty();
         // }
 
+        [NonSerialized] private Vector2 m_ViewPos;
+        [NonSerialized] private Vector2 m_ViewSize;
         [NonSerialized] private Vector2 m_ParentSize;
-        private bool CheckParentRectSize()
+        private bool CheckViewport()
         {
-            var size = transform.parent is RectTransform parentRT ? parentRT.rect.size : Vector2.zero;
-            if (m_ParentSize != size)
+            var isChange = false;
+            var viewport = this.viewport;
+            var size = viewport ? viewport.rect.size : Vector2.zero;
+            if (m_ViewPos != viewport.anchoredPosition)
             {
-                m_ParentSize = size;
-                return true;
+                m_ViewPos = viewport.anchoredPosition;
+                isChange = true;
             }
-            else return false;
+            if (m_ViewSize != size)
+            {
+                m_ViewSize = size;
+                isChange = true;
+            }
+            if (viewport == transform.parent)
+            {
+                m_ParentSize = m_ViewSize;
+            }
+            else
+            {
+                var parentSize = transform.parent is RectTransform parentRect ? parentRect.rect.size : Vector2.zero;
+                if (m_ParentSize != parentSize)
+                {
+                    m_ParentSize = parentSize;
+                    isChange = true;
+                }
+            }
+            return isChange;
         }
 
         [NonSerialized] private Vector2 m_Position;
@@ -143,6 +192,10 @@ namespace UnityEngine.UI.EX
         {
             m_IsDirty = false;
             m_Tracker.Clear();
+
+            m_Tracker.Add(this, rectTransform,
+                DrivenTransformProperties.SizeDelta | DrivenTransformProperties.Anchors | DrivenTransformProperties.Pivot
+            );
 
             CalcAlongAxis(0);
         }
@@ -176,7 +229,6 @@ namespace UnityEngine.UI.EX
 
         public virtual void SetLayoutHorizontal()
         {
-            SetSelfRect();
             SetChildrenAlongAxis(0);
         }
 
@@ -189,17 +241,18 @@ namespace UnityEngine.UI.EX
 
         #region ScrollItems
 
-        public void SetItemData(int itemCount, Func<int, float> onGetItemSize, Func<int, GameObject> onGetPrefab, Action<int, GameObject> onUpdateItem, bool clearPools = true)
+        public void SetItemData(int itemCount, Func<int, float> onGetItemSize, Func<int, GameObject> onGetPrefab, Action<int, GameObject> onUpdateItem, bool resetPos = true, bool clearPools = true)
         {
             m_ItemCount = Math.Max(itemCount, 0);
             m_OnGetItemSize = onGetItemSize;
             m_OnGetPrefab = onGetPrefab;
             m_OnUpdateItem = onUpdateItem;
 
-            UpdateItemData(true, true, clearPools);
+            UpdateItemData(resetPos, true, true);
+            if (clearPools) ClearPools();
         }
 
-        public void UpdateItemData(bool updateSize = false, bool updatePrefab = false, bool clearPools = false)
+        public void UpdateItemData(bool resetPos = false, bool updateSize = false, bool updatePrefab = false)
         {
             if (m_ScrollItems.Count < m_ItemCount)
             {
@@ -211,7 +264,7 @@ namespace UnityEngine.UI.EX
                 for (int i = m_ItemCount; i < m_ScrollItems.Count; i++)
                 {
                     var item = m_ScrollItems[i];
-                    HideItem(item);
+                    item.HideItem(m_PrefabPools);
                 }
                 m_ScrollItems.RemoveRange(m_ItemCount, m_ScrollItems.Count - m_ItemCount);
             }
@@ -235,17 +288,26 @@ namespace UnityEngine.UI.EX
                 if (updatePrefab)
                 {
                     var nextPrefab = m_OnGetPrefab(i);
-                    if (item.prefab != nextPrefab) HideItem(item);
+                    if (item.prefab != nextPrefab) item.HideItem(m_PrefabPools);
                     item.prefab = nextPrefab;
                 }
+                m_ScrollItems[i] = item;
 
                 pos += item.size + spacing;
             }
+
             m_TotalPreferredSize[axis] = pos - (m_ItemCount > 0 ? spacing : 0) + (axis == 0 ? padding.right : padding.bottom);
+            if (isVertical)
+                rectTransform.sizeDelta = new Vector2(0, m_TotalPreferredSize.y);
+            else
+                rectTransform.sizeDelta = new Vector2(m_TotalPreferredSize.x, 0);
 
-            if (clearPools) ClearPools();
+            UpdateItem(true, resetPos);
+        }
 
-            UpdateItem(true);
+        public void ResetPos()
+        {
+            UpdateItem(false, true);
         }
 
         public void ClearPools()
@@ -257,13 +319,32 @@ namespace UnityEngine.UI.EX
             m_PrefabPools.Clear();
         }
 
-        private void UpdateItem(bool forceDirty = false)
+        [NonSerialized] private readonly Vector3[] m_ViewCorners = new Vector3[4];
+        private void UpdateItem(bool forceDirty = false, bool resetPos = false)
         {
+            if (!viewport) return;
+
             var axis = (int)layoutAxis;
-            var headPos = axis == 0
-                ? rectTransform.pivot[axis] * rectTransform.sizeDelta[axis] - rectTransform.anchoredPosition[axis]
-                : (1 - rectTransform.pivot[axis]) * rectTransform.sizeDelta[axis] + rectTransform.anchoredPosition[axis];
-            var tailPos = headPos + m_ParentSize[axis];
+
+            viewport.GetWorldCorners(m_ViewCorners);
+            var topLeftWorld = m_ViewCorners[1];
+            var bottomRightWorld = m_ViewCorners[3];
+            var headPos = rectTransform.InverseTransformPoint(topLeftWorld)[axis];
+            var tailPos = rectTransform.InverseTransformPoint(bottomRightWorld)[axis];
+            if (isVertical)
+            {
+                var viewSize = headPos - tailPos;
+                headPos = (1 - rectTransform.pivot[axis]) * rectTransform.sizeDelta[axis] - headPos;
+                tailPos = headPos + viewSize;
+                SetSelfRect(viewSize, resetPos);
+            }
+            else
+            {
+                var viewSize = tailPos - headPos;
+                headPos = rectTransform.pivot[axis] * rectTransform.sizeDelta[axis] + headPos;
+                tailPos = headPos + viewSize;
+                SetSelfRect(viewSize, resetPos);
+            }
 
             int curIndex;
             var isDirty = false;
@@ -273,7 +354,8 @@ namespace UnityEngine.UI.EX
                 var item = m_ScrollItems[curIndex];
                 if (!item.IsVisible(headPos, tailPos))
                 {
-                    if (HideItem(item)) isDirty = true;
+                    if (item.HideItem(m_PrefabPools)) isDirty = true;
+                    m_ScrollItems[curIndex] = item;
                 }
                 else break;
             }
@@ -285,71 +367,50 @@ namespace UnityEngine.UI.EX
             for (m_TailIndex = curIndex; curIndex < m_ItemCount; curIndex++)
             {
                 var item = m_ScrollItems[curIndex];
-                if (HideItem(item)) isDirty = true;
+                if (item.HideItem(m_PrefabPools)) isDirty = true;
+                m_ScrollItems[curIndex] = item;
             }
             for (int i = m_HeadIndex; i < m_TailIndex; i++)
             {
-                if (ShowItem(m_ScrollItems[i], i)) isDirty = true;
+                var item = m_ScrollItems[i];
+                if (item.ShowItem(m_PrefabPools, transform, m_OnUpdateItem, i)) isDirty = true;
+                m_ScrollItems[i] = item;
             }
 
             if (isDirty || forceDirty) SetDirty();
         }
 
-        private bool ShowItem(ScrollItem item, int updateIndex)
+        private void SetSelfRect(float viewSize, bool resetPos)
         {
-            if (item.gameObject) return false;
-
-            if (!m_PrefabPools.TryGetValue(item.prefabID, out var itemPool)) m_PrefabPools[item.prefabID] = itemPool = new();
-            item.gameObject = itemPool.Count > 0 ? itemPool.Dequeue() : Instantiate(item.prefab, transform);
-            m_OnUpdateItem?.Invoke(updateIndex, item.gameObject);
-            item.gameObject.SetActive(true);
-
-            return true;
-        }
-
-        private bool HideItem(ScrollItem item)
-        {
-            if (!item.gameObject) return false;
-
-            item.gameObject.SetActive(false);
-            if (m_PrefabPools.TryGetValue(item.prefabID, out var itemPool)) itemPool.Enqueue(item.gameObject);
-            else Destroy(item.gameObject);
-            item.gameObject = null;
-
-            return true;
-        }
-
-        private void SetSelfRect()
-        {
-            m_Tracker.Add(this, rectTransform,
-                DrivenTransformProperties.SizeDelta | DrivenTransformProperties.Anchors | DrivenTransformProperties.Pivot
-            );
-
             if (isVertical)
             {
-                rectTransform.sizeDelta = new Vector2(0, LayoutUtility.GetPreferredSize(rectTransform, 1));
                 rectTransform.anchorMin = Vector2.up;
                 rectTransform.anchorMax = Vector2.one;
 
-                var pivot = 1 - (rectTransform.sizeDelta.y <= m_ParentSize.y ? (int)alignment * 0.5f : GetAlignmentOnAxis(1));
-                var pivotChange = pivot != rectTransform.pivot.y;
-                rectTransform.pivot = new Vector2(0.5f, pivot);
-                rectTransform.anchoredPosition = new Vector2(
-                    rectTransform.anchoredPosition.x, pivotChange ? -((1 - pivot) * m_ParentSize.y) : rectTransform.anchoredPosition.y
+                var pivot = 1 - (rectTransform.sizeDelta.y <= viewSize ? (int)alignment * 0.5f : GetAlignmentOnAxis(1));
+                if (pivot != rectTransform.pivot.y) rectTransform.anchoredPosition = new Vector2(
+                    rectTransform.anchoredPosition.x, -((1 - pivot) * viewSize)
                 );
+                rectTransform.pivot = new Vector2(0.5f, pivot);
             }
             else
             {
-                rectTransform.sizeDelta = new Vector2(LayoutUtility.GetPreferredSize(rectTransform, 0), 0);
                 rectTransform.anchorMin = Vector2.zero;
                 rectTransform.anchorMax = Vector2.up;
 
-                var pivot = rectTransform.sizeDelta.x <= m_ParentSize.x ? (int)alignment * 0.5f : GetAlignmentOnAxis(0);
-                var pivotChange = pivot != rectTransform.pivot.x;
-                rectTransform.pivot = new Vector2(pivot, 0.5f);
-                rectTransform.anchoredPosition = new Vector2(
-                    pivotChange ? pivot * m_ParentSize.x : rectTransform.anchoredPosition.x, rectTransform.anchoredPosition.y
+                var pivot = rectTransform.sizeDelta.x <= viewSize ? (int)alignment * 0.5f : GetAlignmentOnAxis(0);
+                if (pivot != rectTransform.pivot.x) rectTransform.anchoredPosition = new Vector2(
+                    pivot * viewSize, rectTransform.anchoredPosition.y
                 );
+                rectTransform.pivot = new Vector2(pivot, 0.5f);
+            }
+
+            if (resetPos)
+            {
+                if (isVertical)
+                    rectTransform.anchoredPosition = new Vector2(0, -((1 - rectTransform.pivot.y) * viewSize));
+                else
+                    rectTransform.anchoredPosition = new Vector2(rectTransform.pivot.x * viewSize, 0);
             }
         }
 
@@ -595,16 +656,17 @@ namespace UnityEngine.UI.EX
 
         #region Editor
 #if UNITY_EDITOR
+        [NonSerialized] private bool inspectorChange = false;
         protected override void OnValidate()
         {
-            UpdateItemData();
-            SetDirty();
+            inspectorChange = true;
         }
 
         protected override void Reset()
         {
             m_ChildControl = false;
             m_ChildControlLayout = false;
+
             rectTransform.anchoredPosition = Vector2.zero;
             SetDirty();
         }
@@ -612,22 +674,30 @@ namespace UnityEngine.UI.EX
         [NonSerialized] private readonly List<Vector2> m_Sizes = new List<Vector2>(10);
         protected virtual void Update()
         {
-            if (Application.isPlaying) return;
-
-            var dirty = false;
-            for (int i = 0; i < transform.childCount; i++)
+            if (inspectorChange)
             {
-                if (m_Sizes.Count <= i) m_Sizes.Add(Vector2.zero);
-
-                var t = transform.GetChild(i) as RectTransform;
-                if (t && t.sizeDelta != m_Sizes[i])
-                {
-                    m_Sizes[i] = t.sizeDelta;
-                    dirty = true;
-                }
+                inspectorChange = false;
+                UpdateItemData(!Application.isPlaying);
+                SetDirty();
             }
 
-            if (dirty) SetDirty();
+            if (!Application.isPlaying)
+            {
+                var dirty = false;
+                for (int i = 0; i < transform.childCount; i++)
+                {
+                    if (m_Sizes.Count <= i) m_Sizes.Add(Vector2.zero);
+
+                    var t = transform.GetChild(i) as RectTransform;
+                    if (t && t.sizeDelta != m_Sizes[i])
+                    {
+                        m_Sizes[i] = t.sizeDelta;
+                        dirty = true;
+                    }
+                }
+
+                if (dirty) SetDirty();
+            }
         }
 #endif
         #endregion
