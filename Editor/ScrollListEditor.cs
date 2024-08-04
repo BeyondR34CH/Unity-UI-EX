@@ -16,8 +16,9 @@ namespace UnityEditor.UI.EX
         SerializedProperty m_ReverseArrangement;
         SerializedProperty m_ChildControl;
         SerializedProperty m_ChildControlLayout;
-        SerializedProperty m_ChildForceExpand;
         SerializedProperty m_ChildScale;
+        SerializedProperty m_ChildForceExpand;
+        SerializedProperty m_ChildForceExpandLayout;
 
         protected virtual void OnEnable()
         {
@@ -30,8 +31,9 @@ namespace UnityEditor.UI.EX
             m_ReverseArrangement = serializedObject.FindProperty("m_ReverseArrangement");
             m_ChildControl = serializedObject.FindProperty("m_ChildControl");
             m_ChildControlLayout = serializedObject.FindProperty("m_ChildControlLayout");
-            m_ChildForceExpand = serializedObject.FindProperty("m_ChildForceExpand");
             m_ChildScale = serializedObject.FindProperty("m_ChildScale");
+            m_ChildForceExpand = serializedObject.FindProperty("m_ChildForceExpand");
+            m_ChildForceExpandLayout = serializedObject.FindProperty("m_ChildForceExpandLayout");
         }
 
         public override void OnInspectorGUI()
@@ -60,6 +62,8 @@ namespace UnityEditor.UI.EX
             rect.width = Mathf.Max(60, (rect.width - 4) / 3);
             EditorGUIUtility.labelWidth = 60;
             ToggleLeft(rect, m_ChildScale, EditorGUIUtility.TrTextContent(m_LayoutAxis.enumValueIndex == 1 ? "Width" : "Height"));
+            rect.x += rect.width + 2 + 17;
+            EditorGUI.LabelField(rect, m_LayoutAxis.enumValueIndex == 0 ? "Width" : "Height");
             EditorGUIUtility.labelWidth = 0;
 
             rect = EditorGUILayout.GetControlRect();
@@ -67,6 +71,8 @@ namespace UnityEditor.UI.EX
             rect.width = Mathf.Max(60, (rect.width - 4) / 3);
             EditorGUIUtility.labelWidth = 60;
             ToggleLeft(rect, m_ChildForceExpand, EditorGUIUtility.TrTextContent(m_LayoutAxis.enumValueIndex == 1 ? "Width" : "Height"));
+            rect.x += rect.width + 2;
+            ToggleLeft(rect, m_ChildForceExpandLayout, EditorGUIUtility.TrTextContent(m_LayoutAxis.enumValueIndex == 0 ? "Width" : "Height"));
             EditorGUIUtility.labelWidth = 0;
 
             serializedObject.ApplyModifiedProperties();

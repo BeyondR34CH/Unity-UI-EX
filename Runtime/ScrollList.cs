@@ -59,15 +59,15 @@ namespace UnityEngine.UI.EX
         }
 
         [SerializeField] private RectTransform m_Viewport;
-        public RectTransform viewport { get { return m_Viewport ? m_Viewport : transform.parent is RectTransform parentRect ? parentRect : null; } set { m_Viewport = value; SetDirty(); } }
+        public RectTransform viewport { get { return m_Viewport ? m_Viewport : transform.parent is RectTransform parentRect ? parentRect : null; } set { m_Viewport = value; UpdateItem(true, true, false); } }
 
         [SerializeField] private RectTransform.Axis m_LayoutAxis = RectTransform.Axis.Vertical;
-        public RectTransform.Axis layoutAxis { get { return m_LayoutAxis; } set { m_LayoutAxis = value; UpdateItemData(true); SetDirty(); } }
+        public RectTransform.Axis layoutAxis { get { return m_LayoutAxis; } set { m_LayoutAxis = value; UpdateItemData(true); } }
 
         private bool isVertical => layoutAxis == RectTransform.Axis.Vertical;
 
         [SerializeField] private ListAnchor m_Alignment = ListAnchor.MiddleCenter;
-        public ListAnchor alignment { get { return m_Alignment; } set { m_Alignment = value; UpdateItemData(); SetDirty(); } }
+        public ListAnchor alignment { get { return m_Alignment; } set { m_Alignment = value; UpdateItem(true, true, false); } }
 
         private int m_ItemCount;
         private Func<int, float> m_OnGetItemSize;
@@ -96,9 +96,7 @@ namespace UnityEngine.UI.EX
         protected override void OnEnable()
         {
             m_IsDirty = false;
-            m_Position = rectTransform.anchoredPosition;
-            m_ViewSize = viewport ? viewport.rect.size : Vector2.zero;
-            UpdateItem(true, true);
+            UpdateItemData(true);
         }
 
         protected override void OnDisable()
@@ -114,7 +112,7 @@ namespace UnityEngine.UI.EX
 
             if (viewSizeChange || ancPosChange)
             {
-                UpdateItem(viewSizeChange);
+                UpdateItem(false, viewSizeChange, false);
             }
         }
 
@@ -141,19 +139,37 @@ namespace UnityEngine.UI.EX
         [NonSerialized] private Vector2 m_ViewPos;
         [NonSerialized] private Vector2 m_ViewSize;
         [NonSerialized] private Vector2 m_ParentSize;
+        [NonSerialized] private Vector2 m_SelfPos;
+        private void UpdateCheckValue()
+        {
+            var viewport = this.viewport;
+            var pos = viewport ? viewport.anchoredPosition : Vector2.zero;
+            var size = viewport ? viewport.rect.size : Vector2.zero;
+            m_ViewPos = pos;
+            m_ViewSize = size;
+
+            if (viewport == transform.parent)
+                m_ParentSize = m_ViewSize;
+            else
+                m_ParentSize = transform.parent is RectTransform parentRect ? parentRect.rect.size : Vector2.zero;
+
+            m_SelfPos = rectTransform.anchoredPosition;
+        }
+
         private bool CheckViewport()
         {
             var isChange = false;
             var viewport = this.viewport;
-            var size = viewport ? viewport.rect.size : Vector2.zero;
-            if (m_ViewPos != viewport.anchoredPosition)
+            var viewPos = viewport ? viewport.anchoredPosition : Vector2.zero;
+            var viewSize = viewport ? viewport.rect.size : Vector2.zero;
+            if (m_ViewPos != viewPos)
             {
-                m_ViewPos = viewport.anchoredPosition;
+                m_ViewPos = viewPos;
                 isChange = true;
             }
-            if (m_ViewSize != size)
+            if (m_ViewSize != viewSize)
             {
-                m_ViewSize = size;
+                m_ViewSize = viewSize;
                 isChange = true;
             }
             if (viewport == transform.parent)
@@ -172,16 +188,16 @@ namespace UnityEngine.UI.EX
             return isChange;
         }
 
-        [NonSerialized] private Vector2 m_Position;
         private bool CheckAnchoredPos()
         {
-            var pos = rectTransform.anchoredPosition;
-            if (m_Position != pos)
+            var isChange = false;
+            var selfPos = rectTransform.anchoredPosition;
+            if (m_SelfPos != selfPos)
             {
-                m_Position = pos;
-                return true;
+                m_SelfPos = selfPos;
+                isChange = true;
             }
-            else return false;
+            return isChange;
         }
 
         #endregion
@@ -302,12 +318,12 @@ namespace UnityEngine.UI.EX
             else
                 rectTransform.sizeDelta = new Vector2(m_TotalPreferredSize.x, 0);
 
-            UpdateItem(true, resetPos);
+            UpdateItem(true, true, resetPos);
         }
 
         public void ResetPos()
         {
-            UpdateItem(false, true);
+            UpdateItem(true, false, true);
         }
 
         public void ClearPools()
@@ -320,9 +336,12 @@ namespace UnityEngine.UI.EX
         }
 
         [NonSerialized] private readonly Vector3[] m_ViewCorners = new Vector3[4];
-        private void UpdateItem(bool forceDirty = false, bool resetPos = false)
+        private void UpdateItem(bool updateCheckValue, bool forceDirty, bool resetPos)
         {
+            if (updateCheckValue) UpdateCheckValue();
             if (!viewport) return;
+
+            SetSelfRect(resetPos);
 
             var axis = (int)layoutAxis;
 
@@ -336,14 +355,12 @@ namespace UnityEngine.UI.EX
                 var viewSize = headPos - tailPos;
                 headPos = (1 - rectTransform.pivot[axis]) * rectTransform.sizeDelta[axis] - headPos;
                 tailPos = headPos + viewSize;
-                SetSelfRect(viewSize, resetPos);
             }
             else
             {
                 var viewSize = tailPos - headPos;
                 headPos = rectTransform.pivot[axis] * rectTransform.sizeDelta[axis] + headPos;
                 tailPos = headPos + viewSize;
-                SetSelfRect(viewSize, resetPos);
             }
 
             int curIndex;
@@ -380,38 +397,26 @@ namespace UnityEngine.UI.EX
             if (isDirty || forceDirty) SetDirty();
         }
 
-        private void SetSelfRect(float viewSize, bool resetPos)
+        private void SetSelfRect(bool resetPos)
         {
             if (isVertical)
             {
-                rectTransform.anchorMin = Vector2.up;
-                rectTransform.anchorMax = Vector2.one;
-
-                var pivot = 1 - (rectTransform.sizeDelta.y <= viewSize ? (int)alignment * 0.5f : GetAlignmentOnAxis(1));
-                if (pivot != rectTransform.pivot.y) rectTransform.anchoredPosition = new Vector2(
-                    rectTransform.anchoredPosition.x, -((1 - pivot) * viewSize)
-                );
+                var pivot = 1 - (rectTransform.sizeDelta.y <= m_ParentSize.y ? (int)alignment * 0.5f : GetAlignmentOnAxis(1));
+                if (pivot != rectTransform.pivot.y) rectTransform.anchoredPosition = new Vector2(rectTransform.anchoredPosition.x, 0);
                 rectTransform.pivot = new Vector2(0.5f, pivot);
+                rectTransform.anchorMin = new Vector2(0f, pivot);
+                rectTransform.anchorMax = new Vector2(1f, pivot);
             }
             else
             {
-                rectTransform.anchorMin = Vector2.zero;
-                rectTransform.anchorMax = Vector2.up;
-
-                var pivot = rectTransform.sizeDelta.x <= viewSize ? (int)alignment * 0.5f : GetAlignmentOnAxis(0);
-                if (pivot != rectTransform.pivot.x) rectTransform.anchoredPosition = new Vector2(
-                    pivot * viewSize, rectTransform.anchoredPosition.y
-                );
+                var pivot = rectTransform.sizeDelta.x <= m_ParentSize.x ? (int)alignment * 0.5f : GetAlignmentOnAxis(0);
+                if (pivot != rectTransform.pivot.x) rectTransform.anchoredPosition = new Vector2(0, rectTransform.anchoredPosition.y);
                 rectTransform.pivot = new Vector2(pivot, 0.5f);
+                rectTransform.anchorMin = new Vector2(pivot, 0f);
+                rectTransform.anchorMax = new Vector2(pivot, 1f);
             }
 
-            if (resetPos)
-            {
-                if (isVertical)
-                    rectTransform.anchoredPosition = new Vector2(0, -((1 - rectTransform.pivot.y) * viewSize));
-                else
-                    rectTransform.anchoredPosition = new Vector2(rectTransform.pivot.x * viewSize, 0);
-            }
+            if (resetPos) rectTransform.anchoredPosition = Vector2.zero;
         }
 
         #endregion
@@ -421,16 +426,16 @@ namespace UnityEngine.UI.EX
         #region LayoutGroupProperties
 
         [SerializeField] private RectOffset m_Padding = new();
-        public RectOffset padding { get { return m_Padding; } set { m_Padding = value; UpdateItemData(); SetDirty(); } }
+        public RectOffset padding { get { return m_Padding; } set { m_Padding = value; UpdateItemData(); } }
 
         [SerializeField] private float m_Spacing = 0;
-        public float spacing { get { return m_Spacing; } set { m_Spacing = value; UpdateItemData(); SetDirty(); } }
+        public float spacing { get { return m_Spacing; } set { m_Spacing = value; UpdateItemData(); } }
 
         [SerializeField] private TextAnchor m_ChildAlignment = TextAnchor.MiddleCenter;
         public TextAnchor childAlignment { get { return m_ChildAlignment; } set { m_ChildAlignment = value; SetDirty(); } }
 
         [SerializeField] private bool m_ReverseArrangement = false;
-        public bool reverseArrangement { get { return m_ReverseArrangement; } set { m_ReverseArrangement = value; UpdateItemData(); SetDirty(); } }
+        public bool reverseArrangement { get { return m_ReverseArrangement; } set { m_ReverseArrangement = value; UpdateItemData(); } }
 
         [SerializeField] private bool m_ChildControl = true;
         public bool childControl { get { return m_ChildControl; } set { m_ChildControl = value; SetDirty(); } }
@@ -443,6 +448,9 @@ namespace UnityEngine.UI.EX
 
         [SerializeField] protected bool m_ChildForceExpand = true;
         public bool childForceExpandWidth { get { return m_ChildForceExpand; } set { m_ChildForceExpand = value; SetDirty(); } }
+
+        [SerializeField] protected bool m_ChildForceExpandLayout = true;
+        public bool childForceExpandWidthLayout { get { return m_ChildForceExpandLayout; } set { m_ChildForceExpandLayout = value; SetDirty(); } }
 
         #endregion
 
@@ -505,7 +513,7 @@ namespace UnityEngine.UI.EX
 
             float size = alongOtherAxis ? m_ParentSize[axis] : rectTransform.sizeDelta[axis];
             bool controlSize = alongOtherAxis ? m_ChildControl : m_ChildControlLayout;
-            bool childForceExpandSize = axis != (int)layoutAxis && m_ChildForceExpand;
+            bool childForceExpandSize = alongOtherAxis ? m_ChildForceExpand : m_ChildForceExpandLayout;
             float alignmentOnAxis = GetAlignmentOnAxis(axis);
 
             if (alongOtherAxis)
@@ -540,7 +548,9 @@ namespace UnityEngine.UI.EX
 
                     if (controlSize)
                     {
-                        SetChildAlongAxisWithScale(child, axis, item.position, item.size, 1);
+                        var childSize = childForceExpandSize ? item.size : Mathf.Min(item.size, LayoutUtility.GetPreferredSize(child, axis));
+                        childSize = Mathf.Max(LayoutUtility.GetMinSize(child, axis), childSize);
+                        SetChildAlongAxisWithScale(child, axis, item.position, childSize, 1);
                     }
                     else
                     {
@@ -656,6 +666,12 @@ namespace UnityEngine.UI.EX
 
         #region Editor
 #if UNITY_EDITOR
+        [NonSerialized] private RectTransform.Axis prevLayoutAxis;
+        protected override void Awake()
+        {
+            prevLayoutAxis = layoutAxis;
+        }
+
         [NonSerialized] private bool inspectorChange = false;
         protected override void OnValidate()
         {
@@ -666,9 +682,7 @@ namespace UnityEngine.UI.EX
         {
             m_ChildControl = false;
             m_ChildControlLayout = false;
-
-            rectTransform.anchoredPosition = Vector2.zero;
-            SetDirty();
+            UpdateItemData(true);
         }
 
         [NonSerialized] private readonly List<Vector2> m_Sizes = new List<Vector2>(10);
@@ -677,8 +691,8 @@ namespace UnityEngine.UI.EX
             if (inspectorChange)
             {
                 inspectorChange = false;
-                UpdateItemData(!Application.isPlaying);
-                SetDirty();
+                UpdateItemData(prevLayoutAxis != layoutAxis);
+                prevLayoutAxis = layoutAxis;
             }
 
             if (!Application.isPlaying)
