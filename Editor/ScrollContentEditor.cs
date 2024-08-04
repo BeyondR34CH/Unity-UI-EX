@@ -3,35 +3,16 @@ using UnityEngine.UI.EX;
 
 namespace UnityEditor.UI.EX
 {
-    [CustomEditor(typeof(ScrollList), true)]
+    [CustomEditor(typeof(ScrollContent), true)]
     [CanEditMultipleObjects]
-    public class ScrollListEditor : Editor
+    public class ScrollContentEditor : ScrollListEditor
     {
-        protected SerializedProperty m_Viewport;
-        protected SerializedProperty m_LayoutAxis;
-        protected SerializedProperty m_Padding;
-        protected SerializedProperty m_Spacing;
-        protected SerializedProperty m_ChildAlignment;
-        protected SerializedProperty m_ReverseArrangement;
-        protected SerializedProperty m_ChildControl;
-        protected SerializedProperty m_ChildControlLayout;
-        protected SerializedProperty m_ChildScale;
-        protected SerializedProperty m_ChildForceExpand;
-        protected SerializedProperty m_ChildForceExpandLayout;
+        protected SerializedProperty m_Alignment;
 
-        protected virtual void OnEnable()
+        protected override void OnEnable()
         {
-            m_Viewport = serializedObject.FindProperty("m_Viewport");
-            m_LayoutAxis = serializedObject.FindProperty("m_LayoutAxis");
-            m_Padding = serializedObject.FindProperty("m_Padding");
-            m_Spacing = serializedObject.FindProperty("m_Spacing");
-            m_ChildAlignment = serializedObject.FindProperty("m_ChildAlignment");
-            m_ReverseArrangement = serializedObject.FindProperty("m_ReverseArrangement");
-            m_ChildControl = serializedObject.FindProperty("m_ChildControl");
-            m_ChildControlLayout = serializedObject.FindProperty("m_ChildControlLayout");
-            m_ChildScale = serializedObject.FindProperty("m_ChildScale");
-            m_ChildForceExpand = serializedObject.FindProperty("m_ChildForceExpand");
-            m_ChildForceExpandLayout = serializedObject.FindProperty("m_ChildForceExpandLayout");
+            base.OnEnable();
+            m_Alignment = serializedObject.FindProperty("m_Alignment");
         }
 
         public override void OnInspectorGUI()
@@ -40,6 +21,7 @@ namespace UnityEditor.UI.EX
 
             EditorGUILayout.PropertyField(m_Viewport, new GUIContent(m_Viewport.objectReferenceValue ? "Viewport" : "Viewport (Def-Parent)"), true);
             EditorGUILayout.PropertyField(m_LayoutAxis, true);
+            EditorGUILayout.PropertyField(m_Alignment, true);
             EditorGUILayout.PropertyField(m_Padding, true);
             EditorGUILayout.PropertyField(m_Spacing, true);
             EditorGUILayout.PropertyField(m_ChildAlignment, true);
@@ -73,22 +55,6 @@ namespace UnityEditor.UI.EX
             EditorGUIUtility.labelWidth = 0;
 
             serializedObject.ApplyModifiedProperties();
-        }
-
-        protected void ToggleLeft(Rect position, SerializedProperty property, GUIContent label)
-        {
-            bool toggle = property.boolValue;
-            EditorGUI.BeginProperty(position, label, property);
-            EditorGUI.BeginChangeCheck();
-            int oldIndent = EditorGUI.indentLevel;
-            EditorGUI.indentLevel = 0;
-            toggle = EditorGUI.ToggleLeft(position, label, toggle);
-            EditorGUI.indentLevel = oldIndent;
-            if (EditorGUI.EndChangeCheck())
-            {
-                property.boolValue = property.hasMultipleDifferentValues ? true : !property.boolValue;
-            }
-            EditorGUI.EndProperty();
         }
     }
 }
