@@ -71,5 +71,13 @@ namespace UnityEngine.UI.EX
 
             if (resetPos) rectTransform.anchoredPosition = Vector2.zero;
         }
+
+#if UNITY_EDITOR
+        protected override void Reset()
+        {
+            rectTransform.anchoredPosition = Vector2.zero;
+            base.Reset();
+        }
+#endif
     }
 }
